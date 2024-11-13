@@ -15,6 +15,8 @@ use crate::{
     Error,
 };
 
+use crate::service_account::{self, ServiceAccountFlow, ServiceAccountFlowOpts, ServiceAccountKey};
+
 const IAM_CREDENTIALS_ENDPOINT: &str = "https://iamcredentials.googleapis.com";
 
 fn uri(email: &str) -> String {
@@ -105,6 +107,16 @@ pub struct ServiceAccountImpersonationFlow {
     pub(crate) service_account_email: String,
 }
 
+/// ServiceAccountImpersonationFlow uses user credentials to impersonate a service
+/// account.
+pub struct ServiceAccountImpersonationFlowS {
+    // If true, we request an impersonated access token. If false, we request an
+    // impersonated ID token.
+    pub(crate) access_token: bool,
+    pub(crate) inner_flow: ServiceAccountFlow,
+    pub(crate) service_account_email: String,
+}
+
 impl ServiceAccountImpersonationFlow {
     pub(crate) fn new(
         user_secret: AuthorizedUserSecret,
@@ -148,6 +160,52 @@ impl ServiceAccountImpersonationFlow {
     }
 }
 
+impl ServiceAccountImpersonationFlowS {
+    pub(crate) async fn new(
+        service_account_key: ServiceAccountKey,
+        service_account_email: &str,
+    ) -> ServiceAccountImpersonationFlowS {
+        ServiceAccountImpersonationFlowS {
+            access_token: true,
+            inner_flow: ServiceAccountFlow::new(ServiceAccountFlowOpts {
+                key: service_account::FlowOptsKey::Key(Box::new(service_account_key)),
+                subject: None,
+            })
+            .await
+            .unwrap(),
+            service_account_email: service_account_email.to_string(),
+        }
+    }
+
+    pub(crate) async fn token<T>(
+        &self,
+        hyper_client: &impl SendRequest,
+        scopes: &[T],
+    ) -> Result<TokenInfo, Error>
+    where
+        T: AsRef<str>,
+    {
+        let inner_token = self
+            .inner_flow
+            .token(hyper_client, scopes)
+            .await?
+            .access_token
+            .ok_or(Error::MissingAccessToken)?;
+
+        token_impl(
+            hyper_client,
+            &if self.access_token {
+                uri(&self.service_account_email)
+            } else {
+                id_uri(&self.service_account_email)
+            },
+            self.access_token,
+            &inner_token,
+            scopes,
+        )
+        .await
+    }
+}
 fn access_request(
     uri: &str,
     inner_token: &str,

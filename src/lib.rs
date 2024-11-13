@@ -115,7 +115,7 @@ pub use crate::client::{CustomHyperClientBuilder, HttpClient, HyperClientBuilder
 pub use crate::authenticator::{
     ApplicationDefaultCredentialsAuthenticator, AuthorizedUserAuthenticator,
     DeviceFlowAuthenticator, ExternalAccountAuthenticator, InstalledFlowAuthenticator,
-    ServiceAccountImpersonationAuthenticator,
+    ServiceAccountImpersonationAuthenticator, ServiceAccountImpersonationAuthenticatorS,
 };
 
 pub use crate::helper::*;

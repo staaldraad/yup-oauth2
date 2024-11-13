@@ -13,6 +13,7 @@ use crate::external_account::{ExternalAccountFlow, ExternalAccountSecret};
 use crate::installed::{InstalledFlow, InstalledFlowReturnMethod};
 use crate::refresh::RefreshFlow;
 use crate::service_account_impersonator::ServiceAccountImpersonationFlow;
+use crate::service_account_impersonator::ServiceAccountImpersonationFlowS;
 
 #[cfg(feature = "service-account")]
 use crate::service_account::{self, ServiceAccountFlow, ServiceAccountFlowOpts, ServiceAccountKey};
@@ -523,6 +524,51 @@ impl ServiceAccountImpersonationAuthenticator {
     }
 }
 
+/// Create a access token authenticator that uses user secrets to impersonate
+/// a service account.
+///
+/// ```
+/// # #[cfg(any(feature = "hyper-rustls", feature = "hyper-tls"))]
+/// # async fn foo() {
+/// # use yup_oauth2::authenticator::AuthorizedUserAuthenticator;
+/// # let secret = yup_oauth2::read_service_account_key("/tmp/foo").await.unwrap();
+/// # let email = "my-test-account@my-test-project.iam.gserviceaccount.com";
+///     let authenticator = yup_oauth2::ServiceAccountImpersonationAuthenticatorS::builder(secret, email)
+///         .build()
+///         .await
+///         .expect("failed to create authenticator");
+/// # }
+/// ```
+pub struct ServiceAccountImpersonationAuthenticatorS;
+impl ServiceAccountImpersonationAuthenticatorS {
+    /// Use the builder pattern to create an Authenticator that uses the device flow.
+    #[cfg(any(feature = "hyper-rustls", feature = "hyper-tls"))]
+    #[cfg_attr(docsrs, doc(cfg(any(feature = "hyper-rustls", feature = "hyper-tls"))))]
+    pub async fn builder(
+        service_account_key: ServiceAccountKey,
+        service_account_email: &str,
+    ) -> AuthenticatorBuilder<DefaultHyperClientBuilder, ServiceAccountImpersonationFlowS> {
+        Self::with_client(
+            service_account_key,
+            service_account_email,
+            DefaultHyperClientBuilder::default(),
+        )
+        .await
+    }
+
+    /// Construct a new Authenticator that uses the installed flow and the provided http client.
+    pub async fn with_client<C>(
+        service_account_key: ServiceAccountKey,
+        service_account_email: &str,
+        client: C,
+    ) -> AuthenticatorBuilder<C, ServiceAccountImpersonationFlowS> {
+        AuthenticatorBuilder::new(
+            ServiceAccountImpersonationFlowS::new(service_account_key, service_account_email).await,
+            client,
+        )
+    }
+}
+
 /// ## Methods available when building any Authenticator.
 /// ```
 /// # async fn foo() {
@@ -838,6 +884,30 @@ impl<C> AuthenticatorBuilder<C, ServiceAccountImpersonationFlow> {
     }
 }
 
+impl<C> AuthenticatorBuilder<C, ServiceAccountImpersonationFlowS> {
+    /// Create the authenticator.
+    pub async fn build(self) -> io::Result<Authenticator<C::Connector>>
+    where
+        C: HyperClientBuilder,
+    {
+        Self::common_build(
+            self.hyper_client_builder,
+            self.storage_type,
+            AuthFlow::ServiceAccountImpersonationFlowS(self.auth_flow),
+        )
+        .await
+    }
+
+    /// Configure this authenticator to impersonate an ID token (rather an an access token,
+    /// as is the default).
+    ///
+    /// For more on impersonating ID tokens, see [google's docs](https://cloud.google.com/iam/docs/create-short-lived-credentials-direct#sa-credentials-oidc).
+    pub fn request_id_token(mut self) -> Self {
+        self.auth_flow.access_token = false;
+        self
+    }
+}
+
 /// ## Methods available when building an access token flow Authenticator.
 impl<C> AuthenticatorBuilder<C, AccessTokenFlow> {
     /// Create the authenticator.
@@ -865,6 +935,7 @@ mod private {
     #[cfg(feature = "service-account")]
     use crate::service_account::ServiceAccountFlow;
     use crate::service_account_impersonator::ServiceAccountImpersonationFlow;
+    use crate::service_account_impersonator::ServiceAccountImpersonationFlowS;
     use crate::types::{ApplicationSecret, TokenInfo};
 
     #[allow(clippy::enum_variant_names)]
@@ -874,6 +945,7 @@ mod private {
         #[cfg(feature = "service-account")]
         ServiceAccountFlow(ServiceAccountFlow),
         ServiceAccountImpersonationFlow(ServiceAccountImpersonationFlow),
+        ServiceAccountImpersonationFlowS(ServiceAccountImpersonationFlowS),
         ApplicationDefaultCredentialsFlow(ApplicationDefaultCredentialsFlow),
         AuthorizedUserFlow(AuthorizedUserFlow),
         ExternalAccountFlow(ExternalAccountFlow),
@@ -888,6 +960,7 @@ mod private {
                 #[cfg(feature = "service-account")]
                 AuthFlow::ServiceAccountFlow(_) => None,
                 AuthFlow::ServiceAccountImpersonationFlow(_) => None,
+                AuthFlow::ServiceAccountImpersonationFlowS(_) => None,
                 AuthFlow::ApplicationDefaultCredentialsFlow(_) => None,
                 AuthFlow::AuthorizedUserFlow(_) => None,
                 AuthFlow::ExternalAccountFlow(_) => None,
@@ -913,6 +986,11 @@ mod private {
                     service_account_flow.token(hyper_client, scopes).await
                 }
                 AuthFlow::ServiceAccountImpersonationFlow(service_account_impersonation_flow) => {
+                    service_account_impersonation_flow
+                        .token(hyper_client, scopes)
+                        .await
+                }
+                AuthFlow::ServiceAccountImpersonationFlowS(service_account_impersonation_flow) => {
                     service_account_impersonation_flow
                         .token(hyper_client, scopes)
                         .await
